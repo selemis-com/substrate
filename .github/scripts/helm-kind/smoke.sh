@@ -21,7 +21,7 @@ export KIND_CLUSTER_NAME=helm-e2e
 export KO_DOCKER_REPO=localhost:5001
 export KO_DEFAULTPLATFORMS="linux/$(go env GOARCH)"
 context="kind-$KIND_CLUSTER_NAME"
-ingress_id=spiffe://cluster.local/ns/ate-system/sa/atenet-client
+ingress_ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client,spiffe://cluster.local/ns/ate-system/sa/helm-smoke-unused
 work="$(mktemp -d)"
 proxy_pid=
 
@@ -36,6 +36,8 @@ cleanup() {
       cat "$work/proxy.log"
     fi
     kubectl --context "$context" get pods,workerpools -A -o wide || true
+    kubectl --context "$context" -n podcertificate-controller-system \
+      logs deployment/podcertificate-controller --tail=100 || true
     kubectl --context "$context" get events -A --sort-by=.metadata.creationTimestamp || true
   fi
   rm -rf "$work"
@@ -52,6 +54,12 @@ signing_fingerprint() {
     jq -cS '.items | sort_by(.metadata.name) | map([.metadata.uid, .data])'
 }
 
+latest_actor_snapshot() {
+  ate get actor helm-smoke -a ate-demo-counter -o json |
+    jq -ce '[.status.snapshots[] | select(.owner == "SNAPSHOT_OWNER_ACTOR")]
+      | max_by(.generation | tonumber)'
+}
+
 start_proxy() {
   "$work/kubectl-ate" --context "$context" proxy actor helm-smoke 8000:80 -a ate-demo-counter >"$work/proxy.log" 2>&1 &
   proxy_pid=$!
@@ -62,7 +70,7 @@ start_proxy() {
 
 hack/create-kind-cluster.sh
 go test ./cmd/ate-setup/internal/steps -run '^TestWriteKindHelmChart$' -count=3 -shuffle=on
-hack/install-kind-helm.sh "$context" "$tag" "$ingress_id" | tee "$work/install.log"
+hack/install-kind-helm.sh "$context" "$tag" "$ingress_ids" | tee "$work/install.log"
 worker_image="$(sed -n 's/^gVisor WorkerPool image: //p' "$work/install.log")"
 [[ "$worker_image" == *@sha256:* ]]
 
@@ -82,22 +90,32 @@ start_proxy
 curl --fail --show-error --silent --max-time 30 http://127.0.0.1:8000/ |
   grep -F 'preserved file counter: 1 |'
 ate suspend actor helm-smoke -a ate-demo-counter --mode=sync
-ate get actor helm-smoke -a ate-demo-counter -o json |
-  jq -e '([.status.snapshots[] | select(.owner == "SNAPSHOT_OWNER_ACTOR")]
-    | max_by(.generation | tonumber)
-    | .durableSnapshot.state) == "SNAPSHOT_STORAGE_STATE_COMPLETED"' >/dev/null
+snapshot="$(latest_actor_snapshot)"
+jq -e '.durableSnapshot.state == "SNAPSHOT_STORAGE_STATE_COMPLETED"
+  and (.durableSnapshot.object.snapshotUri | length > 0)' <<<"$snapshot" >/dev/null
+snapshot_id="$(jq -er '.uuid' <<<"$snapshot")"
 
 kill "$proxy_pid"
 wait "$proxy_pid" || true
 proxy_pid=
 
+# Drop the node-local reference so the next request restores from object storage.
+if jq -e '(.locality // "") != ""' <<<"$snapshot" >/dev/null; then
+  ate revert actor helm-smoke -a ate-demo-counter
+fi
+
 before="$(signing_fingerprint | sha256sum)"
-ATE_HELM_CHART_ARCHIVE= hack/install-kind-helm.sh "$context" "$tag" "$ingress_id"
+ATE_HELM_CHART_ARCHIVE= hack/install-kind-helm.sh "$context" "$tag" "$ingress_ids"
 after="$(signing_fingerprint | sha256sum)"
 if [[ "$before" != "$after" ]]; then
   echo 'A signing Secret changed during the second install.' >&2
   exit 1
 fi
+
+latest_actor_snapshot |
+  jq -e --arg id "$snapshot_id" '.uuid == $id
+    and (.locality // "") == ""
+    and .durableSnapshot.state == "SNAPSHOT_STORAGE_STATE_COMPLETED"' >/dev/null
 
 start_proxy
 curl --fail --show-error --silent --max-time 30 http://127.0.0.1:8000/ |

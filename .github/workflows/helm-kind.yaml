@@ -41,10 +41,9 @@ jobs:
       env:
         ATE_HELM_CHART_ARCHIVE: ${{ runner.temp }}/substrate-kind-charts.zip
       run: .github/scripts/helm-kind/smoke.sh v1.0.0-rc.3
-    - name: Upload generated Helm charts
-      if: ${{ !cancelled() }}
+    - name: Upload tested Helm charts
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: substrate-kind-charts
         path: ${{ runner.temp }}/substrate-kind-charts.zip
-        compression-level: 0
+        archive: false
+        if-no-files-found: error

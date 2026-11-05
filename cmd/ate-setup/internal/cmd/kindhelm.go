@@ -52,4 +52,13 @@ func init() {
 			return env.SetupKindHelmPostgres(cmd.Context())
 		},
 	})
+
+	setupCmd.AddCommand(&cobra.Command{
+		Use:   "wait-podcertificate-trust-bundles",
+		Short: "Wait for the podcertificate controller to publish its trust bundles",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return env.WaitForPodCertificateTrustBundles(cmd.Context())
+		},
+	})
 }

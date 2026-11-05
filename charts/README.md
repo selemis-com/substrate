@@ -34,20 +34,22 @@ the gVisor worker image to use with `gvisor-default`.
 ```sh
 go run ./cmd/ate-setup --kind \
   --image-repo ghcr.io/agent-substrate/substrate --image-tag v1.0.0-rc.3 \
-  --ingress-allowed-spiffe-ids spiffe://cluster.local/ns/client-system/sa/actor-client \
   package-kind-helm ./kind-charts
 ```
 
 The output directory must be new. Each child chart can be inspected with
 `helm template` or archived with `helm package`. The image digests, namespaces,
-and ingress allowlist are resolved at generation time. The same checkout and
+and runtime assets are resolved at generation time. Set
+`ingressAllowedSPIFFEIDs` to a comma-separated string when installing the
+`substrate` chart. Its empty default denies actor ingress. The same checkout and
 configuration must supply the bootstrap steps. Pass the hash written by
 `ate-setup create kind-helm-prerequisites HASH_FILE` to the `substrate` chart as
 `--set-string apiEnvHash=HASH` so configuration changes roll the API server.
 
 The [Helm Kind workflow](../.github/workflows/helm-kind.yaml) checks that a second
-install preserves signing Secrets and restores an Actor's durable volume.
+install preserves signing Secrets and restores an Actor's durable volume
+from object storage.
 
-Download the `substrate-kind-charts` artifact from the workflow run to get
-`substrate-kind-charts.zip`. It contains the five generated chart directories
-from the first install and the matching `worker-image.txt`.
+A passing workflow uploads `substrate-kind-charts.zip`. It contains the five
+generated charts from the first install and the matching `worker-image.txt`.
+The smoke test supplies its own router identity at install time.

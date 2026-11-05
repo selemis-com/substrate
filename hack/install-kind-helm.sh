@@ -46,8 +46,7 @@ done
 
 go build -o "$work/ate-setup" ./cmd/ate-setup
 setup=("$work/ate-setup" --kind --context "$context" --no-dev-env --no-report-defaults
-  --image-repo ghcr.io/agent-substrate/substrate --image-tag "$tag"
-  --ingress-allowed-spiffe-ids "$ingress_ids")
+  --image-repo ghcr.io/agent-substrate/substrate --image-tag "$tag")
 
 "${setup[@]}" package-kind-helm "$work/charts"
 helm lint "$work/charts/"*/
@@ -55,7 +54,7 @@ if [[ -n "${ATE_HELM_CHART_ARCHIVE:-}" ]]; then
   (cd "$work" && zip -qr kind-charts.zip charts)
   mv -- "$work/kind-charts.zip" "$ATE_HELM_CHART_ARCHIVE"
 fi
-"${setup[@]}" create kind-helm-prerequisites "$work/api-env-hash"
+"${setup[@]}" --ingress-allowed-spiffe-ids "$ingress_ids" create kind-helm-prerequisites "$work/api-env-hash"
 api_env_hash="$(cat "$work/api-env-hash")"
 
 install_chart() {
@@ -70,17 +69,15 @@ kc wait --for=condition=Established --timeout=1m \
   crd/workerpools.ate.dev crd/sandboxconfigs.ate.dev crd/csidriverconfigs.ate.dev
 
 install_chart substrate-podcert podcertificate-controller-system
-kc wait --for=create --timeout=5m \
-  clustertrustbundle/podidentity.podcert.ate.dev:identity:primary-bundle \
-  clustertrustbundle/servicedns.podcert.ate.dev:identity:primary-bundle \
-  clustertrustbundle/postgres.podcert.ate.dev:identity:primary-bundle
+"${setup[@]}" setup wait-podcertificate-trust-bundles
 
 install_chart substrate-storage ate-system --wait-for-jobs
 "${setup[@]}" create kind-helm-postgres-roles
 # Submit the DaemonSet first and wait for its rollout after the API is up.
 helm --kube-context "$context" upgrade --install substrate-atelet "$work/charts/substrate-atelet" \
   --namespace ate-system
-install_chart substrate ate-system --set-string "apiEnvHash=$api_env_hash"
+install_chart substrate ate-system --set-string "apiEnvHash=$api_env_hash" \
+  --set-literal "ingressAllowedSPIFFEIDs=$ingress_ids"
 kc -n ate-system rollout status daemonset/atelet --timeout=5m
 
 printf 'gVisor WorkerPool image: %s\n' "$(cat "$work/charts/worker-image.txt")"

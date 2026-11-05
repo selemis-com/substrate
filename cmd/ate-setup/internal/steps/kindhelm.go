@@ -30,8 +30,11 @@ import (
 	"go.ate.dev/substrate/cmd/ate-setup/internal/kube"
 )
 
-// Helm supplies the real hash after the bootstrap has written the API config.
-const kindHelmAPIEnvHash = "ATE_HELM_API_ENV_HASH"
+// Helm substitutes these markers when installing the chart.
+const (
+	kindHelmAPIEnvHash = "ATE_HELM_API_ENV_HASH"
+	kindHelmIngressArg = "--ingress-allowed-spiffe-ids=ATE_HELM_INGRESS_IDS"
+)
 
 func (e *Env) validateKindHelm() error {
 	if !e.Cfg.Kind || !e.Cfg.Images.IsPrebuilt() {
@@ -61,9 +64,23 @@ func (e *Env) PackageKindHelm(ctx context.Context, out string) error {
 	if err := e.validateKindHelm(); err != nil {
 		return err
 	}
+	if len(e.Cfg.IngressAllowedSPIFFEIDs) != 0 {
+		return fmt.Errorf("set ingressAllowedSPIFFEIDs when installing the chart")
+	}
+	license, err := os.ReadFile(e.Cfg.Path("LICENSE"))
+	if err != nil {
+		return err
+	}
 	if err := os.Mkdir(out, 0o755); err != nil {
 		return err
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(out)
+		}
+	}()
+
 	charts := []struct {
 		name  string
 		paths []string
@@ -121,6 +138,10 @@ func (e *Env) PackageKindHelm(ctx context.Context, out string) error {
 			if err != nil {
 				return err
 			}
+			router, err = appendContainerArgs(router, "atenet-router", "atenet-router", kindHelmIngressArg)
+			if err != nil {
+				return err
+			}
 			egress, err := e.renderAtenetEgressManifest(ctx, nil)
 			if err != nil {
 				return err
@@ -131,7 +152,7 @@ func (e *Env) PackageKindHelm(ctx context.Context, out string) error {
 			}
 			objects = append(objects, network...)
 		}
-		if err := writeKindHelmChart(out, chart.name, e.Cfg.Images.Tag, objects); err != nil {
+		if err := writeKindHelmChart(out, chart.name, e.Cfg.Images.Tag, objects, license); err != nil {
 			return err
 		}
 	}
@@ -139,17 +160,24 @@ func (e *Env) PackageKindHelm(ctx context.Context, out string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(out, "worker-image.txt"), []byte(worker+"\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(out, "worker-image.txt"), []byte(worker+"\n"), 0o644); err != nil {
+		return err
+	}
+	complete = true
+	return nil
 }
 
 // writeKindHelmChart keeps the Kubernetes objects separate from Helm templates.
 // This also preserves template expressions inside ConfigMap data.
-func writeKindHelmChart(out, name, tag string, objects []*unstructured.Unstructured) error {
+func writeKindHelmChart(out, name, tag string, objects []*unstructured.Unstructured, license []byte) error {
 	dir := filepath.Join(out, name)
 	if err := os.MkdirAll(filepath.Join(dir, "templates"), 0o755); err != nil {
 		return err
 	}
 	var manifests bytes.Buffer
+	manifests.WriteString("# Copyright 2026 The Agent Substrate Authors\n" +
+		"# Generated from the upstream Kind manifests by ate-setup.\n" +
+		"# SPDX-License-Identifier: Apache-2.0\n")
 	for _, obj := range objects {
 		switch obj.GetKind() {
 		case "Namespace":
@@ -181,9 +209,29 @@ func writeKindHelmChart(out, name, tag string, objects []*unstructured.Unstructu
 	if err := os.WriteFile(filepath.Join(dir, "manifests.yaml"), manifests.Bytes(), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), license, 0o644); err != nil {
+		return err
+	}
 	template := "{{ .Files.Get \"manifests.yaml\" }}\n"
 	if name == "substrate" {
-		template = fmt.Sprintf("{{ .Files.Get \"manifests.yaml\" | replace %q (.Values.apiEnvHash | default \"unmanaged\" | quote) }}\n", kindHelmAPIEnvHash)
+		if err := os.WriteFile(filepath.Join(dir, "values.yaml"),
+			[]byte("apiEnvHash: \"\"\ningressAllowedSPIFFEIDs: \"\"\n"), 0o644); err != nil {
+			return err
+		}
+		const schema = `{
+  "type": "object",
+  "properties": {
+    "apiEnvHash": {"type": "string", "pattern": "^([0-9a-f]{64})?$"},
+    "ingressAllowedSPIFFEIDs": {"type": "string"}
+  }
+}
+`
+		if err := os.WriteFile(filepath.Join(dir, "values.schema.json"), []byte(schema), 0o644); err != nil {
+			return err
+		}
+		template = fmt.Sprintf(`{{- $ingress := printf "--ingress-allowed-spiffe-ids=%%s" .Values.ingressAllowedSPIFFEIDs -}}
+{{ .Files.Get "manifests.yaml" | replace %q (.Values.apiEnvHash | default "unmanaged" | quote) | replace %q ($ingress | quote) }}
+`, kindHelmAPIEnvHash, kindHelmIngressArg)
 	}
 	return os.WriteFile(filepath.Join(dir, "templates", "manifests.yaml"), []byte(template), 0o644)
 }

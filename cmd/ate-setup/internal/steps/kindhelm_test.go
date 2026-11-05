@@ -49,8 +49,12 @@ data:
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := writeKindHelmChart(dir, "substrate", "v1.0.0-rc.3", objects); err != nil {
+	if err := writeKindHelmChart(dir, "substrate", "v1.0.0-rc.3", objects, []byte("test license")); err != nil {
 		t.Fatal(err)
+	}
+	license, err := os.ReadFile(filepath.Join(dir, "substrate", "LICENSE"))
+	if err != nil || string(license) != "test license" {
+		t.Fatalf("unexpected chart license %q: %v", license, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "substrate", "manifests.yaml"))
 	if err != nil {
