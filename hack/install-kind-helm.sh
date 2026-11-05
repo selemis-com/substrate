@@ -50,6 +50,11 @@ setup=("$work/ate-setup" --kind --context "$context" --no-dev-env --no-report-de
   --ingress-allowed-spiffe-ids "$ingress_ids")
 
 "${setup[@]}" package-kind-helm "$work/charts"
+helm lint "$work/charts/"*/
+if [[ -n "${ATE_HELM_CHART_ARCHIVE:-}" ]]; then
+  (cd "$work" && zip -qr kind-charts.zip charts)
+  mv -- "$work/kind-charts.zip" "$ATE_HELM_CHART_ARCHIVE"
+fi
 "${setup[@]}" create kind-helm-prerequisites "$work/api-env-hash"
 api_env_hash="$(cat "$work/api-env-hash")"
 

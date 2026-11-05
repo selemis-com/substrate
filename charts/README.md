@@ -44,3 +44,10 @@ and ingress allowlist are resolved at generation time. The same checkout and
 configuration must supply the bootstrap steps. Pass the hash written by
 `ate-setup create kind-helm-prerequisites HASH_FILE` to the `substrate` chart as
 `--set-string apiEnvHash=HASH` so configuration changes roll the API server.
+
+The [Helm Kind workflow](../.github/workflows/helm-kind.yaml) checks that a second
+install preserves signing Secrets and restores an Actor's durable volume.
+
+Download the `substrate-kind-charts` artifact from the workflow run to get
+`substrate-kind-charts.zip`. It contains the five generated chart directories
+from the first install and the matching `worker-image.txt`.
