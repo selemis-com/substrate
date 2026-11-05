@@ -32,6 +32,16 @@ metadata:
   name: podcertificate-controller-system
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otel-system
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: snapshots
@@ -64,14 +74,18 @@ data:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].GetKind() != "PersistentVolumeClaim" || got[1].GetKind() != "ConfigMap" {
+	if len(got) != 3 || got[0].GetKind() != "Namespace" || got[0].GetName() != "otel-system" ||
+		got[1].GetKind() != "PersistentVolumeClaim" || got[2].GetKind() != "ConfigMap" {
 		t.Fatalf("unexpected chart objects: %v", got)
 	}
-	annotations := got[0].GetAnnotations()
+	if got[0].GetAnnotations()["helm.sh/resource-policy"] != "keep" {
+		t.Fatal("chart-managed namespace must survive uninstall")
+	}
+	annotations := got[1].GetAnnotations()
 	if annotations["helm.sh/resource-policy"] != "keep" || annotations["example.com/owner"] != "substrate" {
 		t.Errorf("unexpected PVC annotations: %v", annotations)
 	}
-	value, _, err := unstructured.NestedString(got[1].Object, "data", "example")
+	value, _, err := unstructured.NestedString(got[2].Object, "data", "example")
 	if err != nil || value != "{{ downstream expression }}" {
 		t.Errorf("unexpected ConfigMap value %q: %v", value, err)
 	}

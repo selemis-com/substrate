@@ -181,8 +181,8 @@ func writeKindHelmChart(out, name, tag string, objects []*unstructured.Unstructu
 	for _, obj := range objects {
 		switch obj.GetKind() {
 		case "Namespace":
-			if obj.GetName() == NamespacePodCert {
-				// The CA bootstrap creates this namespace before Helm runs.
+			if obj.GetName() == NamespaceAteSystem || obj.GetName() == NamespacePodCert {
+				// Bootstrap creates these namespaces before Helm runs.
 				continue
 			}
 			fallthrough
